@@ -1,16 +1,20 @@
 import os
 import datetime as dt
+
+import pandas as pd
 from massive import RESTClient
 
-MASSIVE_API_KEY = os.environ.get("POLYGON_API_KEY", "").strip()
-if not MASSIVE_API_KEY:
-    raise RuntimeError("Missing POLYGON_API_KEY. Add it in GitHub Secrets, Actions secrets.")
+API_KEY = os.environ.get("POLYGON_API_KEY", "").strip()
+if not API_KEY:
+    raise RuntimeError("Missing POLYGON_API_KEY GitHub secret")
 
-client = RESTClient(MASSIVE_API_KEY)
+client = RESTClient(API_KEY)
+
+WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
 EARNINGS_KEYWORDS = (
     "earnings",
-    "reports q",
+    "reports",
     "eps",
     "revenue",
     "beats",
@@ -18,10 +22,14 @@ EARNINGS_KEYWORDS = (
     "profit",
     "guidance",
     "quarter",
+    "q1",
+    "q2",
+    "q3",
+    "q4",
 )
 
-MAX_ROWS = 8
-NEWS_LIMIT = 80
+MAX_ROWS = 12
+NEWS_PER_TICKER = 2
 
 
 def looks_like_earnings(title: str) -> bool:
@@ -29,26 +37,22 @@ def looks_like_earnings(title: str) -> bool:
     return any(k in t for k in EARNINGS_KEYWORDS)
 
 
-def pick_trade_date(max_lookback_days: int = 7) -> str:
-    d = dt.date.today()
-    for _ in range(max_lookback_days):
-        date_str = d.isoformat()
-        try:
-            items = list(client.list_news(limit=1, order="desc", sort="published_utc"))
-            return date_str
-        except Exception:
-            pass
-        d = d - dt.timedelta(days=1)
+def get_sp500_tickers() -> list[str]:
+    tables = pd.read_html(WIKI_SP500_URL)
+    df = tables[0]
+    tickers = df["Symbol"].astype(str).tolist()
+
+    clean = []
+    for t in tickers:
+        t = t.strip().upper()
+        t = t.replace(".", "-")
+        clean.append(t)
+
+    return clean
+
+
+def pick_date_str() -> str:
     return dt.date.today().isoformat()
-
-
-def safe_company_name(ticker: str) -> str:
-    try:
-        res = client.get_ticker_details(ticker)
-        name = getattr(res, "name", None)
-        return name or ticker
-    except Exception:
-        return ticker
 
 
 def safe_daily_change_pct(ticker: str, date_str: str):
@@ -64,10 +68,40 @@ def safe_daily_change_pct(ticker: str, date_str: str):
         bars = list(bars) if bars else []
         if not bars:
             return None
+
         b = bars[0]
-        if not b.open or b.open <= 0:
+        o = getattr(b, "open", None)
+        c = getattr(b, "close", None)
+        if not o or o <= 0 or c is None:
             return None
-        return (b.close - b.open) / b.open * 100.0
+
+        return (c - o) / o * 100.0
+    except Exception:
+        return None
+
+
+def safe_company_name(ticker: str) -> str:
+    try:
+        res = client.get_ticker_details(ticker)
+        name = getattr(res, "name", None)
+        return name or ticker
+    except Exception:
+        return ticker
+
+
+def latest_earnings_headline(ticker: str) -> str | None:
+    try:
+        items = client.list_ticker_news(
+            ticker=ticker,
+            limit=NEWS_PER_TICKER,
+            order="desc",
+            sort="published_utc",
+        )
+        for item in items:
+            title = getattr(item, "title", "") or ""
+            if looks_like_earnings(title):
+                return title
+        return None
     except Exception:
         return None
 
@@ -76,7 +110,7 @@ def render_html(rows, date_str: str) -> str:
     title = f"Notes ({date_str})"
 
     css = """
-    :root { --text:#111827; --muted:#6b7280; --line:#e5e7eb; --bg:#ffffff; }
+    :root { --text:#111827; --line:#e5e7eb; --bg:#ffffff; }
     body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
            background: var(--bg); color: var(--text); margin: 24px; }
     .wrap { max-width: 1100px; }
@@ -92,8 +126,10 @@ def render_html(rows, date_str: str) -> str:
     """
 
     def fmt_pct(x):
-        sign = "+" if x is not None and x > 0 else ""
-        return "" if x is None else f"{sign}{x:.1f}%"
+        if x is None:
+            return ""
+        sign = "+" if x > 0 else ""
+        return f"{sign}{x:.1f}%"
 
     head = f"""<!doctype html>
 <html>
@@ -139,53 +175,42 @@ def render_html(rows, date_str: str) -> str:
 
 
 def main():
-    date_str = pick_trade_date()
+    date_str = pick_date_str()
+    tickers = get_sp500_tickers()
 
-    earnings_candidates = {}
-    news_items = list(client.list_news(limit=NEWS_LIMIT, order="desc", sort="published_utc"))
-
-    for item in news_items:
-        title = getattr(item, "title", "") or ""
-        if not looks_like_earnings(title):
+    matches = []
+    for t in tickers:
+        headline = latest_earnings_headline(t)
+        if not headline:
             continue
-        item_tickers = getattr(item, "tickers", None) or []
-        for t in item_tickers:
-            if t and t not in earnings_candidates:
-                earnings_candidates[t] = title
 
-    rows = []
-    for ticker, headline in earnings_candidates.items():
-        chg = safe_daily_change_pct(ticker, date_str)
+        chg = safe_daily_change_pct(t, date_str)
         if chg is None:
             continue
-        rows.append(
+
+        matches.append(
             {
-                "company": safe_company_name(ticker),
-                "ticker": ticker,
+                "company": safe_company_name(t),
+                "ticker": t,
                 "change": chg,
                 "note": headline,
             }
         )
 
-    rows.sort(key=lambda x: x["change"], reverse=True)
-    rows = rows[:MAX_ROWS]
+    matches.sort(key=lambda x: x["change"], reverse=True)
+    matches = matches[:MAX_ROWS]
 
-    html = render_html(rows, date_str)
+    html = render_html(matches, date_str)
 
-    out_dir = "docs"
-    os.makedirs(out_dir, exist_ok=True)
-
-    latest_path = os.path.join(out_dir, "index.html")
-    dated_path = os.path.join(out_dir, f"daily_table_{date_str}.html")
-
-    with open(latest_path, "w", encoding="utf-8") as f:
+    os.makedirs("docs", exist_ok=True)
+    with open("docs/index.html", "w", encoding="utf-8") as f:
+        f.write(html)
+    with open(f"docs/daily_table_{date_str}.html", "w", encoding="utf-8") as f:
         f.write(html)
 
-    with open(dated_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    print("Wrote:", latest_path, dated_path)
+    print("Wrote docs index.html")
 
 
 if __name__ == "__main__":
     main()
+
