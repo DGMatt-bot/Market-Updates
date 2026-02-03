@@ -2,7 +2,7 @@ name: Build daily table
 
 on:
   schedule:
-    - cron: "20 1 * * 2-6"
+    - cron: "*/5 11-22 * * 1-5"
   workflow_dispatch: {}
 
 permissions:
