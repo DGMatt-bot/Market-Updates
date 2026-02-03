@@ -1,3 +1,2 @@
 massive
-pandas
-lxml
+
