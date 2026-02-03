@@ -10,8 +10,6 @@ if not API_KEY:
 
 client = RESTClient(API_KEY)
 
-WIKI_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-
 EARNINGS_KEYWORDS = (
     "earnings",
     "reports",
@@ -38,17 +36,16 @@ def looks_like_earnings(title: str) -> bool:
 
 
 def get_sp500_tickers() -> list[str]:
-    tables = pd.read_html(WIKI_SP500_URL)
-    df = tables[0]
-    tickers = df["Symbol"].astype(str).tolist()
+    with open("sp500.txt", "r", encoding="utf-8") as f:
+        tickers = []
+        for line in f:
+            t = line.strip().upper()
+            if not t:
+                continue
+            t = t.replace(".", "-")
+            tickers.append(t)
+    return tickers
 
-    clean = []
-    for t in tickers:
-        t = t.strip().upper()
-        t = t.replace(".", "-")
-        clean.append(t)
-
-    return clean
 
 
 def pick_date_str() -> str:
