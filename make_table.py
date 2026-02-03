@@ -1,7 +1,5 @@
 import os
 import datetime as dt
-
-import pandas as pd
 from massive import RESTClient
 
 API_KEY = os.environ.get("POLYGON_API_KEY", "").strip()
