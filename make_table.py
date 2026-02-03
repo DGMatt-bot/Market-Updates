@@ -46,8 +46,27 @@ def get_sp500_tickers() -> list[str]:
 
 
 
-def pick_date_str() -> str:
+def pick_date_str(max_lookback_days: int = 5) -> str:
+    d = dt.date.today()
+    for _ in range(max_lookback_days):
+        date_str = d.isoformat()
+        try:
+            bars = client.get_aggs(
+                ticker="SPY",
+                multiplier=1,
+                timespan="day",
+                from_=date_str,
+                to=date_str,
+                adjusted=True,
+            )
+            if list(bars):
+                return date_str
+        except Exception:
+            pass
+        d -= dt.timedelta(days=1)
+
     return dt.date.today().isoformat()
+
 
 
 def safe_daily_change_pct(ticker: str, date_str: str):
