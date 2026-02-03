@@ -1,5 +1,7 @@
 import os
 import datetime as dt
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from massive import RESTClient
 
 API_KEY = os.environ.get("POLYGON_API_KEY", "").strip()
@@ -118,9 +120,15 @@ def latest_earnings_headline(ticker: str) -> str | None:
         return None
     except Exception:
         return None
+        
+def eastern_timestamp() -> str:
+    now = datetime.now(ZoneInfo("America/New_York"))
+    return now.strftime("%b %d, %Y %I:%M %p ET")
 
 
 def render_html(rows, date_str: str) -> str:
+    updated = eastern_timestamp()
+
     title = f"Notes ({date_str})"
 
     css = """
@@ -155,6 +163,18 @@ def render_html(rows, date_str: str) -> str:
 </head>
 <body>
 <div class="wrap">
+  <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:12px;">
+    <div style="font-size:13px; color:#6b7280;">
+      Last updated: {updated}
+    </div>
+    <div style="font-size:13px;">
+      <a href="https://twitter.com/MrDarkghost" target="_blank" style="text-decoration:none; color:#2563eb;">
+        @MrDarkghost
+      </a>
+    </div>
+  </div>
+<table>
+
 <table>
   <thead>
     <tr>
